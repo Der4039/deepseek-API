@@ -1,0 +1,116 @@
+import os
+from openai import OpenAI
+import gradio as gr
+
+client = OpenAI(
+	api_key = os.environ.get("DEEPSEEK_API_KEY"),
+	base_url = "https://api.deepseek.com"
+)
+
+system_prompt = {
+	"role": "system",
+	"content": "you are an ai, 记得使用中文回复问题"
+}
+
+PROMPT_SET = []
+CONVERSATION_HISTORY = []
+INPUTTEXT = []
+PROMPTLIST = []
+CHATLIST = []
+
+def GetPrompt(prompt, type):
+	if type == 0 and prompt:
+		PROMPT_SET.append({"role": "system", "content": prompt})
+		PROMPTLIST.append(prompt)
+	elif type == 1:
+		PROMPT_SET.clear()
+		PROMPTLIST.clear()
+	prompt_tmp_val = ""
+	for p in PROMPTLIST:
+		if not prompt_tmp_val:
+			prompt_tmp_val += p
+		else :
+			prompt_tmp_val += '\n' + p
+	return gr.update(value = prompt_tmp_val), gr.update(value = "")
+
+def Respond(message, model):
+	if not message:
+		return ""
+	if not CONVERSATION_HISTORY:
+		PROMPT_SET.append(system_prompt)
+		for p in PROMPT_SET:
+			CONVERSATION_HISTORY.append(p)
+
+	INPUTTEXT = CONVERSATION_HISTORY
+	INPUTTEXT.append({"role": "user", "content": "以上信息是你们之前对话的记录，供你参考"})
+	CONVERSATION_HISTORY.append({"role": "user", "content": message})
+	INPUTTEXT.append({"role": "user", "content": message})
+	CHATLIST.append("USER: " + message + '\n')
+
+	response = client.chat.completions.create(
+		model = "deepseek-reasoner" if model == "REASONING" else "deepseek-chat",
+		messages = INPUTTEXT,
+		temperature = 1.0,
+		stream = False
+	)
+
+	ai_response = response.choices[0].message.content
+	CONVERSATION_HISTORY.append({"role": "system", "content": ai_response})
+	CHATLIST.append("API: " + ai_response + '\n' + '\n' + '\n')
+	tmplist = '\n'.join(CHATLIST)
+	return gr.update(value = tmplist), gr.update(value = "")
+
+def ChangeModel(condition):
+	if condition == "CHAT":
+		return "REASONING", gr.update(value = "关闭深度思考")
+	else:
+		return "CHAT", gr.update(value = "深度思考")
+
+def MemoryClear():
+	CONVERSATION_HISTORY.clear()
+
+def UpdateButton(cur):
+	if cur == "深度思考":
+		return gr.update(value = "关闭深度思考")
+	return gr.update(value = "深度思考")
+
+with gr.Blocks() as demo:
+	outputs = gr.Markdown(label = "chat with api")
+	inputs = gr.Textbox(label = "typing...", placeholder = "发送消息")
+	with gr.Row():
+		model_change_button = gr.Button("深度思考")
+		submit_button = gr.Button("发送")
+	with gr.Row():
+		ifreasonser = gr.Textbox(label = "condition", value = "CHAT", interactive = False)
+		cur_prompt = gr.Textbox(label = "prompt", interactive = False)
+	
+	user_prompt = gr.Textbox(label = "alter prompt", placeholder = "请输入提示词")
+	with gr.Row():
+		add_prompt_button = gr.Button("添加提示词")
+		clear_prompt_button = gr.Button("清除提示词")
+	add_prompt_button.click(
+		fn = lambda cur : GetPrompt(cur, 0), 
+		inputs = user_prompt, 
+		outputs = [cur_prompt, user_prompt]
+	)
+	clear_prompt_button.click(
+		fn = lambda cur : GetPrompt(cur, 1), 
+		inputs = user_prompt, 
+		outputs = [cur_prompt, user_prompt]
+	)
+	clear_mem_button = gr.Button("清除记忆")
+	clear_mem_button.click(
+		fn = MemoryClear,
+	)
+	model_change_button.click(
+		ChangeModel,
+		inputs = ifreasonser,
+		outputs = [ifreasonser, model_change_button]
+	)
+	submit_button.click(
+		fn = Respond,
+		inputs = [inputs, ifreasonser],
+		outputs = [outputs, inputs]
+	)
+
+demo.launch(share = True)
