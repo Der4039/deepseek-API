@@ -1,6 +1,8 @@
 import os
 from openai import OpenAI
 import gradio as gr
+import requests
+import json
 
 client = OpenAI(
 	api_key = os.environ.get("DEEPSEEK_API_KEY"),
@@ -12,11 +14,49 @@ system_prompt = {
 	"content": "you are an ai, 记得使用中文回复问题"
 }
 
+headers = {
+	"Authorization": os.environ.get("BOCHA_API_KEY"),
+	"Content-Type": "application/json"
+}
+
 PROMPT_SET = []
 CONVERSATION_HISTORY = []
 INPUTTEXT = []
 PROMPTLIST = []
 CHATLIST = []
+BOCHA_URL = "https://api.bocha.cn/v1/web-search" 
+system_message = "以上内容是user想了解的，请给user几个搜索关键词让user在网上可以查,请直接输出几个关键词供搜索引擎API调用"
+
+def JsonTrans(file):
+	data = fil.json()
+	result = data.get("data", {}).get("webPages", {}).get("value", [])
+	info = []
+	for item in result:
+		title = item.get("name", "").strip()
+		summary = item.get("summary", "").strip()
+		curinfo = []
+		curinfo.append(f"标题：{title}")
+		curinfo.append(f"内容：{summary}")
+		info.append("\n".join(curinfo))
+	return info
+
+def QuestionProcess(message):
+	AI_ANAL = [{"role": "user", "content": message}]
+	AI_ANAL.append({"role": "system", "content": system_message})
+	response = client.chat.completions.create(
+		model = "deepseek-chat",
+		messages = AI_ANAL,
+		temperature = 0.5
+	)
+	ai_response = response.choice[0].message.content
+	global BOCHA_URL
+	payload = json.dumps({
+		"query": ai_response,
+		"summary": True,
+	})
+	response = requests.request("POST", BOCHA_URL, headers = headers, data = payload)
+	return_to_ai = JsonTrans(response)
+	return return_to_ai
 
 def GetPrompt(prompt, type):
 	if type == 0 and prompt:
@@ -33,7 +73,7 @@ def GetPrompt(prompt, type):
 			prompt_tmp_val += '\n' + p
 	return gr.update(value = prompt_tmp_val), gr.update(value = "")
 
-def Respond(message, model):
+def Respond(message, model, search):
 	if not message:
 		return ""
 	if not CONVERSATION_HISTORY:
@@ -41,11 +81,16 @@ def Respond(message, model):
 		for p in PROMPT_SET:
 			CONVERSATION_HISTORY.append(p)
 
-	INPUTTEXT = CONVERSATION_HISTORY
-	INPUTTEXT.append({"role": "user", "content": "以上信息是你们之前对话的记录，供你参考"})
-	CONVERSATION_HISTORY.append({"role": "user", "content": message})
-	INPUTTEXT.append({"role": "user", "content": message})
 	CHATLIST.append("USER: " + message + '\n')
+	INPUTTEXT = CONVERSATION_HISTORY
+	CONVERSATION_HISTORY.append({"role": "user", "content": message})
+	INPUTTEXT.append({"role": "user", "content": "以上信息是你们之前对话的记录，供你参考"})
+	INPUTTEXT.append({"role": "user", "content": message})
+	INPUTTEXT.append({"role": "system", "content": "以上内容是用户的问题"})
+	if search == "ON":
+		resources = QuestionProcess(message)
+		INPUTTEXT.append({"role": "searchingAPI", "content": resources})
+		INPUTTEXT.append({"role": "system", "content": "以上内容是搜索引擎API查到的资料，供你参考"})
 
 	response = client.chat.completions.create(
 		model = "deepseek-reasoner" if model == "REASONING" else "deepseek-chat",
@@ -55,10 +100,15 @@ def Respond(message, model):
 	)
 
 	ai_response = response.choices[0].message.content
-	CONVERSATION_HISTORY.append({"role": "system", "content": ai_response})
+	CONVERSATION_HISTORY.append({"role": "assistant", "content": ai_response})
 	CHATLIST.append("API: " + ai_response + '\n' + '\n' + '\n')
 	tmplist = '\n'.join(CHATLIST)
 	return gr.update(value = tmplist), gr.update(value = "")
+
+def ChangeSearch(condition):
+	if condition == "OFF":
+		return "ON", gr.update(value = "关闭联网搜索")
+	return "OFF", gr.update(value = "联网搜索")
 
 def ChangeModel(condition):
 	if condition == "CHAT":
@@ -79,15 +129,22 @@ with gr.Blocks() as demo:
 	inputs = gr.Textbox(label = "typing...", placeholder = "发送消息")
 	with gr.Row():
 		model_change_button = gr.Button("深度思考")
+		search_change_button = gr.Button("联网搜索")
 		submit_button = gr.Button("发送")
 	with gr.Row():
-		ifreasonser = gr.Textbox(label = "condition", value = "CHAT", interactive = False)
+		ifreasonser = gr.Textbox(label = "model", value = "CHAT", interactive = False)
+		ifsearch = gr.Textbox(label = "search engine", value = "OFF", interactive = False)
 		cur_prompt = gr.Textbox(label = "prompt", interactive = False)
 	
 	user_prompt = gr.Textbox(label = "alter prompt", placeholder = "请输入提示词")
 	with gr.Row():
 		add_prompt_button = gr.Button("添加提示词")
 		clear_prompt_button = gr.Button("清除提示词")
+	search_change_button.click(
+		ChangeSearch,
+		inputs = ifsearch,
+		outputs = [ifsearch, search_change_button]
+	)
 	add_prompt_button.click(
 		fn = lambda cur : GetPrompt(cur, 0), 
 		inputs = user_prompt, 
@@ -109,7 +166,7 @@ with gr.Blocks() as demo:
 	)
 	submit_button.click(
 		fn = Respond,
-		inputs = [inputs, ifreasonser],
+		inputs = [inputs, ifreasonser, ifsearch],
 		outputs = [outputs, inputs]
 	)
 
