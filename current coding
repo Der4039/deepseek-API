@@ -28,7 +28,7 @@ BOCHA_URL = "https://api.bocha.cn/v1/web-search"
 system_message = "以上内容是user想了解的，请给user几个搜索关键词让user在网上可以查,请直接输出几个关键词供搜索引擎API调用"
 
 def JsonTrans(file):
-	data = fil.json()
+	data = file.json()
 	result = data.get("data", {}).get("webPages", {}).get("value", [])
 	info = []
 	for item in result:
@@ -38,7 +38,7 @@ def JsonTrans(file):
 		curinfo.append(f"标题：{title}")
 		curinfo.append(f"内容：{summary}")
 		info.append("\n".join(curinfo))
-	return info
+	return "\n\n".join(info)
 
 def QuestionProcess(message):
 	AI_ANAL = [{"role": "user", "content": message}]
@@ -48,7 +48,7 @@ def QuestionProcess(message):
 		messages = AI_ANAL,
 		temperature = 0.5
 	)
-	ai_response = response.choice[0].message.content
+	ai_response = response.choices[0].message.content
 	global BOCHA_URL
 	payload = json.dumps({
 		"query": ai_response,
@@ -89,7 +89,7 @@ def Respond(message, model, search):
 	INPUTTEXT.append({"role": "system", "content": "以上内容是用户的问题"})
 	if search == "ON":
 		resources = QuestionProcess(message)
-		INPUTTEXT.append({"role": "searchingAPI", "content": resources})
+		INPUTTEXT.append({"role": "system", "content": resources})
 		INPUTTEXT.append({"role": "system", "content": "以上内容是搜索引擎API查到的资料，供你参考"})
 
 	response = client.chat.completions.create(
